@@ -1,0 +1,15 @@
+{
+  "$schema": "https://app.clawnify.com/schema/v1/clawnify.json",
+  "version": 1,
+  "name": "Open Ads Report",
+  "description": "Live cross-platform ads dashboard. Pulls spend, ROAS, conversions and CPA from Meta and Google Ads into Account and Portfolio views, surfaces the top issues hurting performance, and exposes everything as a clean JSON API for Clawnify agents.",
+  "app": {
+    "framework": "preact+hono",
+    "database": false,
+    "storage": false,
+    "credentials": ["metaads", "googleads"]
+  },
+  "env": {
+    "optional": ["OPENROUTER_API_KEY", "GOOGLEADS_DEVELOPER_TOKEN", "GOOGLEADS_LOGIN_CUSTOMER_ID"]
+  }
+}

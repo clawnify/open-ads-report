@@ -1,0 +1,134 @@
+// JSON API. This is the surface the dashboard renders from AND the surface
+// Clawnify exposes to agents (via MCP/API) and to Claude Code. Every number is
+// computed server-side here so all consumers see identical results.
+
+import { Hono } from "hono";
+import type { AccountSummary, Issue, Platform, PortfolioReport } from "./providers/types";
+import { connectedProviders, getProvider } from "./providers";
+import { deriveIssues, resolveRange, sumMetrics } from "./metrics";
+import { diagnostics } from "./credentials";
+import { aiHints } from "./ai";
+import { sampleAccountRefs, sampleAccountReport, samplePortfolio } from "./sample";
+
+const api = new Hono<{ Bindings: Record<string, string> }>();
+
+/** Upgrade an account's issues to AI-generated hints when OpenRouter is configured. */
+async function hintsFor(
+  env: Record<string, string>,
+  acc: AccountSummary,
+  fallback: Issue[],
+  days: number,
+): Promise<Issue[]> {
+  const key = env.OPENROUTER_API_KEY;
+  if (!key) return fallback;
+  const ai = await aiHints(key, {
+    accountName: acc.name,
+    platform: acc.platform,
+    currency: acc.currency,
+    current: acc.metrics,
+    previous: acc.prev,
+    days,
+  });
+  return ai ?? fallback;
+}
+
+const rangeFromQuery = (c: any) =>
+  resolveRange({
+    since: c.req.query("since") || undefined,
+    until: c.req.query("until") || undefined,
+    days: c.req.query("days") ? parseInt(c.req.query("days"), 10) : undefined,
+  });
+
+/** Which platforms are connected, and whether we're in sample/preview mode. */
+api.get("/api/state", async (c) => {
+  const providers = await connectedProviders(c.env);
+  return c.json({
+    providers: providers.map((p) => ({ id: p.id, connected: true })),
+    preview: providers.length === 0,
+    platforms: ["meta", "google"] as Platform[],
+    aiHints: !!c.env.OPENROUTER_API_KEY,
+    diagnostics: await diagnostics(),
+  });
+});
+
+/** Account list for the picker, across all connected providers. */
+api.get("/api/accounts", async (c) => {
+  const providers = await connectedProviders(c.env);
+  if (providers.length === 0) return c.json({ preview: true, accounts: sampleAccountRefs() });
+  try {
+    const lists = await Promise.all(providers.map((p) => p.listAccounts().catch(() => [])));
+    return c.json({ preview: false, accounts: lists.flat() });
+  } catch (err: any) {
+    return c.json({ error: err.message }, 500);
+  }
+});
+
+/** Portfolio View: every account across every platform, plus top issues. */
+api.get("/api/portfolio", async (c) => {
+  const range = rangeFromQuery(c);
+  const providers = await connectedProviders(c.env);
+  if (providers.length === 0) return c.json(samplePortfolio(range));
+
+  try {
+    const all = (await Promise.all(providers.map((p) => p.accountSummaries(range).catch(() => [])))).flat();
+    const accounts = all.sort((a, b) => a.metrics.roas - b.metrics.roas);
+    const totals = sumMetrics(accounts.map((a) => a.metrics));
+    const topIssues = (
+      await Promise.all(
+        accounts.slice(0, 3).map(async (account) => ({
+          account,
+          issues: await hintsFor(c.env, account, deriveIssues(account.metrics, account.prev, []), range.days),
+        })),
+      )
+    ).filter((t) => t.issues.length > 0);
+    const report: PortfolioReport = {
+      range: { since: range.since, until: range.until, days: range.days },
+      totals,
+      accounts,
+      topIssues,
+      generatedAt: new Date().toISOString(),
+      preview: false,
+    };
+    return c.json(report);
+  } catch (err: any) {
+    return c.json({ error: err.message }, 500);
+  }
+});
+
+/** Account View: full report (KPIs, daily series, channel, issues) for one account. */
+api.get("/api/account", async (c) => {
+  const range = rangeFromQuery(c);
+  const accountId = c.req.query("account_id");
+  const platform = c.req.query("platform") as Platform | undefined;
+  const providers = await connectedProviders(c.env);
+
+  if (providers.length === 0) return c.json(sampleAccountReport(range, accountId || undefined));
+  if (!accountId) return c.json({ error: "account_id required" }, 400);
+
+  try {
+    const provider = platform ? await getProvider(c.env, platform) : providers[0];
+    if (!provider) return c.json({ error: `Platform ${platform} not connected` }, 400);
+    const report = await provider.accountReport(accountId, range);
+
+    if (c.env.OPENROUTER_API_KEY) {
+      const cur = report.channels[0]?.metrics;
+      const k = report.kpis;
+      const prev = k.cost.prev !== null
+        ? {
+            spend: k.cost.prev ?? 0, revenue: 0, conversions: k.conversions.prev ?? 0,
+            clicks: k.clicks.prev ?? 0, impressions: 0,
+            roas: k.roas.prev ?? 0, cpa: 0, ctr: k.ctr.prev ?? 0, convRate: k.convRate.prev ?? 0,
+          }
+        : null;
+      if (cur) {
+        const acc: AccountSummary = { ...report.account, metrics: cur, prev };
+        report.issues = await hintsFor(c.env, acc, report.issues, range.days);
+      }
+    }
+    return c.json(report);
+  } catch (err: any) {
+    return c.json({ error: err.message }, 500);
+  }
+});
+
+export default api;

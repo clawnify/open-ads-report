@@ -1,0 +1,20 @@
+# Local development only. In production the Clawnify integrations broker
+# supplies these credentials via the CREDENTIALS service binding.
+
+# ── Meta Ads ────────────────────────────────────────────────────────────────
+# Get from: https://developers.facebook.com/tools/explorer/
+# Required permissions: ads_read
+METAADS_BEARER_TOKEN=your_meta_access_token_here
+
+# ── Google Ads ──────────────────────────────────────────────────────────────
+# OAuth2 access token (refreshed by the integrations broker in production)
+GOOGLEADS_ACCESS_TOKEN=your_google_oauth_access_token_here
+# Developer token from your Google Ads API Center
+GOOGLEADS_DEVELOPER_TOKEN=your_developer_token_here
+# Manager (MCC) account ID used as login-customer-id, digits only (no dashes)
+GOOGLEADS_LOGIN_CUSTOMER_ID=1234567890
+
+# ── AI hints (optional) ───────────────────────────────────────────────────────
+# When set, the dashboard upgrades heuristic issues to AI-written recommendations
+# via OpenRouter. In production this is injected from the org's BYOK key.
+OPENROUTER_API_KEY=your_openrouter_key_here
