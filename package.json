@@ -5,9 +5,11 @@
   "scripts": {
     "dev": "concurrently -n ui,api -c cyan,green \"vite\" \"wrangler dev --port 8787\"",
     "build": "vite build",
+    "typecheck": "tsc --noEmit",
     "deploy": "clawnify deploy"
   },
   "dependencies": {
+    "@clawnify/connections": "^0.1.0",
     "hono": "^4.0.0",
     "lucide-react": "^0.400.0",
     "react": "^19.0.0",

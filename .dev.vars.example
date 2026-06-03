@@ -1,5 +1,13 @@
-# Local development only. In production the Clawnify integrations broker
-# supplies these credentials via the CREDENTIALS service binding.
+# Local development only. In production Clawnify injects credentials via the
+# in-process CREDENTIALS binding — none of this is needed once deployed.
+
+# ── Recommended: one org token ───────────────────────────────────────────────
+# With just this set, @clawnify/connections resolves your REAL org connections
+# (Meta, Google, …) over HTTP — no per-service tokens below needed. Grab it from
+# the Clawnify dashboard. The org is derived from the token server-side.
+# CLAWNIFY_TOKEN=clw_...
+
+# ── OR: bare per-service tokens (fallback when CLAWNIFY_TOKEN is unset) ────────
 
 # ── Meta Ads ────────────────────────────────────────────────────────────────
 # Get from: https://developers.facebook.com/tools/explorer/

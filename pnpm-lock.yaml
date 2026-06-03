@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@clawnify/connections':
+        specifier: ^0.1.0
+        version: 0.1.0
       hono:
         specifier: ^4.0.0
         version: 4.12.15
@@ -136,6 +139,12 @@ packages:
   '@babel/types@7.29.0':
     resolution: {integrity: sha512-LwdZHpScM4Qz8Xw2iKSzS+cfglZzJGvofQICy7W7v4caru4EaAmyUuO6BGrbyQ2mYV11W0U8j5mBhd14dd3B0A==}
     engines: {node: '>=6.9.0'}
+
+  '@clawnify/connections@0.1.0':
+    resolution: {integrity: sha512-2z0qOyYpxh20bmYENEXFv7ED/rm1IBmlZHpALxIbrI5dbuCfLCmVRPC0qI/d0DuKkOae67AKyywmPAXLfauWVA==}
+
+  '@clawnify/integrations@0.1.0':
+    resolution: {integrity: sha512-wQg761JdpStKAe26eE8ezYcqD6Fq2hAt8RjI2f2qljwsXxmGzogBuc/OFKBRE5tX3LRvl7ZBN6wN3IRou9lSBw==}
 
   '@cloudflare/kv-asset-handler@0.4.2':
     resolution: {integrity: sha512-SIOD2DxrRRwQ+jgzlXCqoEFiKOFqaPjhnNTGKXSRLvp1HiOvapLaFG2kEr9dYQTYe8rKrd9uvDUzmAITeNyaHQ==}
@@ -1894,6 +1903,12 @@ snapshots:
     dependencies:
       '@babel/helper-string-parser': 7.27.1
       '@babel/helper-validator-identifier': 7.28.5
+
+  '@clawnify/connections@0.1.0':
+    dependencies:
+      '@clawnify/integrations': 0.1.0
+
+  '@clawnify/integrations@0.1.0': {}
 
   '@cloudflare/kv-asset-handler@0.4.2': {}
 

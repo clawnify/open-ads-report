@@ -36,16 +36,32 @@ computed identically.
 
 ## Credentials
 
-In production the **Clawnify integrations broker** supplies tokens via the
-`CREDENTIALS` service binding (`metaads`, `googleads`). For local `pnpm dev`, copy
-`.dev.vars.example` → `.dev.vars`:
+All credentials are accessed through [`@clawnify/connections`](https://www.npmjs.com/package/@clawnify/connections):
+
+```ts
+import { connect, secret } from "@clawnify/connections";
+
+connect("metaads", env).get("/me/adaccounts", { fields: "name,id" });
+connect("googleads", env).query("SELECT customer.id FROM customer");
+secret("OPENROUTER_API_KEY", env);
+```
+
+App code is identical whether a connection is OAuth or managed — the SDK routes
+to the right backend. What the app needs is declared once in
+[`src/server/requires.ts`](src/server/requires.ts) and reported (with the
+dashboard step for anything missing) at `GET /api/state`.
+
+In production Clawnify injects the credentials binding and the org id; connect
+`metaads` / `googleads` and add `OPENROUTER_API_KEY` **in the Clawnify dashboard**.
+For local `pnpm dev`, copy `.dev.vars.example` → `.dev.vars`:
 
 - **Meta:** `METAADS_BEARER_TOKEN` (scope: `ads_read`)
 - **Google:** `GOOGLEADS_ACCESS_TOKEN` + `GOOGLEADS_DEVELOPER_TOKEN` +
-  `GOOGLEADS_LOGIN_CUSTOMER_ID` (the broker may instead return all three as a JSON
-  blob from `getToken("googleads")`)
+  `GOOGLEADS_LOGIN_CUSTOMER_ID` (managed Google Ads needs none of these in
+  production — they're a local-dev fallback only)
 - Optional: `GOOGLEADS_API_VERSION` (default `v21`) — bump if Google has retired
   that API version.
+- Optional: `OPENROUTER_API_KEY` for AI-generated issue hints.
 
 ## Develop & deploy
 

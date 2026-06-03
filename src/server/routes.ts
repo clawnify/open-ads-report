@@ -6,20 +6,22 @@ import { Hono } from "hono";
 import type { AccountSummary, Issue, Platform, PortfolioReport } from "./providers/types";
 import { connectedProviders, getProvider } from "./providers";
 import { deriveIssues, resolveRange, sumMetrics } from "./metrics";
-import { diagnostics } from "./credentials";
+import { describe, secret } from "@clawnify/connections";
 import { aiHints } from "./ai";
+import { REQUIRES } from "./requires";
+import type { Bindings } from "./env";
 import { sampleAccountRefs, sampleAccountReport, samplePortfolio } from "./sample";
 
-const api = new Hono<{ Bindings: Record<string, string> }>();
+const api = new Hono<{ Bindings: Bindings }>();
 
 /** Upgrade an account's issues to AI-generated hints when OpenRouter is configured. */
 async function hintsFor(
-  env: Record<string, string>,
+  env: Bindings,
   acc: AccountSummary,
   fallback: Issue[],
   days: number,
 ): Promise<Issue[]> {
-  const key = env.OPENROUTER_API_KEY;
+  const key = secret("OPENROUTER_API_KEY", env);
   if (!key) return fallback;
   const ai = await aiHints(key, {
     accountName: acc.name,
@@ -46,8 +48,10 @@ api.get("/api/state", async (c) => {
     providers: providers.map((p) => ({ id: p.id, connected: true })),
     preview: providers.length === 0,
     platforms: ["meta", "google"] as Platform[],
-    aiHints: !!c.env.OPENROUTER_API_KEY,
-    diagnostics: await diagnostics(),
+    aiHints: !!secret("OPENROUTER_API_KEY", c.env),
+    // Agent-legible readiness for everything this app declares in requires.ts:
+    // what's connected, how to access it, and the dashboard step for any gaps.
+    requirements: await describe(c.env, undefined, REQUIRES),
   });
 });
 
@@ -110,7 +114,7 @@ api.get("/api/account", async (c) => {
     if (!provider) return c.json({ error: `Platform ${platform} not connected` }, 400);
     const report = await provider.accountReport(accountId, range);
 
-    if (c.env.OPENROUTER_API_KEY) {
+    if (secret("OPENROUTER_API_KEY", c.env)) {
       const cur = report.channels[0]?.metrics;
       const k = report.kpis;
       const prev = k.cost.prev !== null
