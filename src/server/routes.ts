@@ -11,6 +11,7 @@ import { aiHints } from "./ai";
 import { REQUIRES } from "./requires";
 import type { Bindings } from "./env";
 import { sampleAccountRefs, sampleAccountReport, samplePortfolio } from "./sample";
+import { RECIPES, generateReport } from "./report";
 
 const api = new Hono<{ Bindings: Bindings }>();
 
@@ -130,6 +131,42 @@ api.get("/api/account", async (c) => {
       }
     }
     return c.json(report);
+  } catch (err: any) {
+    return c.json({ error: err.message }, 500);
+  }
+});
+
+/** The analyst report gallery — which recipes exist and which are generatable. */
+api.get("/api/reports", (c) => c.json({ recipes: RECIPES }));
+
+/**
+ * Generate an analyst report (Phase 2). Same data path as /api/account, then the
+ * report engine assembles a typed document (KPIs/charts/tables from real numbers
+ * + AI-authored analysis, heuristic fallback). The surface agents call to get a
+ * full audit, and what the Reports view renders.
+ */
+api.get("/api/report", async (c) => {
+  const recipe = c.req.query("recipe") || "account-audit";
+  if (!RECIPES.some((r) => r.id === recipe && r.available)) {
+    return c.json({ error: `Unknown or unavailable report: ${recipe}` }, 400);
+  }
+  const range = rangeFromQuery(c);
+  const accountId = c.req.query("account_id");
+  const platform = c.req.query("platform") as Platform | undefined;
+  const apiKey = secret("OPENROUTER_API_KEY", c.env);
+  const providers = await connectedProviders(c.env);
+
+  try {
+    const report =
+      providers.length === 0
+        ? sampleAccountReport(range, accountId || undefined)
+        : await (async () => {
+            if (!accountId) throw new Error("account_id required");
+            const provider = platform ? await getProvider(c.env, platform) : providers[0];
+            if (!provider) throw new Error(`Platform ${platform} not connected`);
+            return provider.accountReport(accountId, range);
+          })();
+    return c.json(await generateReport(recipe, report, apiKey));
   } catch (err: any) {
     return c.json({ error: err.message }, 500);
   }

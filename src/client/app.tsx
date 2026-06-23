@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowDown, ArrowUp, Calendar, ChevronDown, RefreshCw } from "lucide-react";
+import { ArrowDown, ArrowUp, Calendar, ChevronDown, RefreshCw, Download, Sparkles } from "lucide-react";
 
 // ── Types (mirror src/server/providers/types.ts) ─────────────────────────────
 
@@ -35,20 +35,42 @@ type PortfolioReport = {
   preview: boolean;
 };
 
-// ── Theme ────────────────────────────────────────────────────────────────────
+// Phase 2 report document (mirrors src/server/report.ts).
+type Tone = "good" | "warn" | "bad" | "info";
+type Severity = "high" | "medium" | "low";
+type Cell = { text: string; align?: "left" | "right"; tone?: Tone; bar?: number };
+type Block =
+  | { kind: "prose"; text: string }
+  | { kind: "kpis"; items: { label: string; value: string; deltaPct?: number | null; higherIsBetter?: boolean }[] }
+  | { kind: "chart"; chart: "spend-roas" | "conv-rate" | "clicks-ctr"; barLabel: string; lineLabel: string }
+  | { kind: "table"; columns: { label: string; align?: "left" | "right" }[]; rows: Cell[][] }
+  | { kind: "findings"; items: { title: string; detail: string; severity: Severity; recommendation?: string }[] }
+  | { kind: "recommendations"; items: { text: string; priority: "P0" | "P1" | "P2" }[] }
+  | { kind: "callout"; tone: Tone; text: string };
+type ReportSection = { eyebrow: string; note?: string; blocks: Block[] };
+type ReportDoc = {
+  recipe: string; title: string; subtitle: string;
+  account: { name: string; platform: Platform; currency: string };
+  range: { since: string; until: string; days: number };
+  health: { label: "Healthy" | "Watch" | "At risk"; tone: Tone; line: string };
+  sections: ReportSection[]; daily: DailyPoint[]; ai: boolean; preview: boolean; generatedAt: string;
+};
+type RecipeMeta = { id: string; name: string; blurb: string; available: boolean };
+
+// ── Theme (Clawnify Apps palette: white canvas, slate ink, coral accent) ──────
 
 const C = {
-  card: "bg-[#FFFCF7] border border-[#EAE3D2]",
-  shadow: "shadow-[0_1px_2px_rgba(26,20,16,0.03)]",
-  text: "text-[#1A1410]",
-  sub: "text-[#7A6F62]",
-  faint: "text-[#A89F90]",
-  label: "text-[11px] font-semibold text-[#1A1410] tracking-[0.14em] uppercase",
+  card: "bg-white border border-[#E2E8F0]",
+  shadow: "shadow-[0_1px_2px_rgba(0,0,0,0.03)]",
+  text: "text-[#1A202C]",
+  sub: "text-[#475569]",
+  faint: "text-[#94A3B8]",
+  label: "text-[11px] font-semibold text-[#1A202C] tracking-[0.14em] uppercase",
 };
-const BAR = "#374151";
-const LINE = "#F97316";
-const GOOD = "#059669";
-const BAD = "#963024";
+const BAR = "#64748B";
+const LINE = "#DD5164";
+const GOOD = "#047857";
+const BAD = "#B91C1C";
 
 // ── Formatters ───────────────────────────────────────────────────────────────
 
@@ -68,10 +90,10 @@ function fmtRange(since: string, until: string) {
   return `${new Date(since + "T00:00:00").toLocaleDateString("en-US", o)} - ${new Date(until + "T00:00:00").toLocaleDateString("en-US", o)}`;
 }
 function perfColor(roas: number) {
-  return roas >= 2.5 ? "#10B981" : roas >= 1 ? "#FBBF24" : BAD;
+  return roas >= 2.5 ? GOOD : roas >= 1 ? "#B45309" : BAD;
 }
 function ctrColor(ctr: number) {
-  return ctr >= 2 ? "#10B981" : ctr >= 1.2 ? "#FBBF24" : BAD;
+  return ctr >= 2 ? GOOD : ctr >= 1.2 ? "#B45309" : BAD;
 }
 
 // ── Small UI atoms ───────────────────────────────────────────────────────────
@@ -96,13 +118,7 @@ const LOGOS: Record<Platform, string> = {
 
 function PlatformLogo({ platform, size = 14 }: { platform: Platform; size?: number }) {
   return (
-    <img
-      src={LOGOS[platform]}
-      alt={platform === "meta" ? "Meta" : "Google Ads"}
-      width={size}
-      height={size}
-      className="object-contain shrink-0"
-    />
+    <img src={LOGOS[platform]} alt={platform === "meta" ? "Meta" : "Google Ads"} width={size} height={size} className="object-contain shrink-0" />
   );
 }
 
@@ -126,13 +142,13 @@ function KpiCard({
     <div className={align === "right" ? "text-right" : ""}>
       <span className={C.label}>{m.label}</span>
       <div className={`flex items-baseline gap-1.5 mt-0.5 ${align === "right" ? "justify-end" : ""}`}>
-        <span className="text-[18px] sm:text-[19px] font-semibold text-[#1A1410] leading-tight tracking-[-0.01em]">{m.value}</span>
+        <span className="text-[18px] sm:text-[19px] font-semibold text-[#1A202C] leading-tight tracking-[-0.01em] tnum">{m.value}</span>
         {m.delta && <Delta d={m.delta} />}
       </div>
     </div>
   );
   return (
-    <div className={`${C.card} ${C.shadow} rounded-[3px] p-4 flex-1 h-full`}>
+    <div className={`${C.card} ${C.shadow} rounded-[6px] p-4 flex-1 h-full`}>
       <div className="flex justify-between">
         <Cell m={left} align="left" />
         <Cell m={right} align="right" />
@@ -143,9 +159,32 @@ function KpiCard({
 
 function PreviewBanner() {
   return (
-    <div className={`px-4 py-3 rounded-[3px] ${C.card} text-[13px] ${C.text}`}>
+    <div className={`px-4 py-3 rounded-[6px] ${C.card} text-[13px] ${C.text}`}>
       <span className="font-semibold">Just a preview.</span> These are sample numbers so you can see how the dashboard works.
       Your real numbers will show up here once you connect an ads account.
+    </div>
+  );
+}
+
+/** Segmented control — sunken track, raised white active pill (never an ink fill). */
+function Segmented<T extends string>({ options, value, onChange, size = "md" }: {
+  options: { value: T; label: string }[]; value: T; onChange: (v: T) => void; size?: "sm" | "md";
+}) {
+  const pad = size === "sm" ? "px-2.5 py-1 text-[12px]" : "px-3.5 py-1.5 text-[13px]";
+  return (
+    <div className="inline-flex items-center gap-0.5 p-0.5 bg-[#F1F5F9] rounded-[6px]">
+      {options.map((o) => {
+        const active = o.value === value;
+        return (
+          <button key={o.value} onClick={() => onChange(o.value)}
+            className={`${pad} rounded-[4px] font-medium whitespace-nowrap transition-colors border ${
+              active ? "bg-white text-[#1A202C] border-[#E2E8F0] shadow-[0_1px_2px_rgba(0,0,0,0.06)]"
+                     : "text-[#475569] hover:text-[#1A202C] border-transparent"
+            }`}>
+            {o.label}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -165,7 +204,7 @@ function ComboChart({
   const pad = { t: 12, b: 24, l: 4, r: 4 };
   const cw = W - pad.l - pad.r;
   const ch = H - pad.t - pad.b;
-  if (data.length === 0) return <div className={`${C.card} ${C.shadow} rounded-[3px] p-4 h-44`} />;
+  if (data.length === 0) return <div className={`${C.card} ${C.shadow} rounded-[6px] p-4 h-44`} />;
 
   const barMax = Math.max(...data.map((d) => d[barKey]), 1);
   const lineMax = Math.max(...data.map((d) => d[lineKey]), 0.001);
@@ -179,7 +218,7 @@ function ComboChart({
   const tickEvery = Math.max(1, Math.round(n / 5));
 
   return (
-    <div className={`${C.card} ${C.shadow} rounded-[3px] p-3 sm:p-4`}>
+    <div className={`${C.card} ${C.shadow} rounded-[6px] p-3 sm:p-4`}>
       <div className="flex items-center gap-4 mb-2">
         <span className="flex items-center gap-1.5">
           <span className="w-2.5 h-2.5 inline-block" style={{ background: BAR }} />
@@ -197,7 +236,7 @@ function ComboChart({
         <polyline points={linePts} fill="none" stroke={LINE} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
         {data.map((d, i) =>
           i % tickEvery === 0 ? (
-            <text key={`t${i}`} x={cx(i)} y={H - 6} textAnchor="middle" fontSize={9} fill="#A89F90">
+            <text key={`t${i}`} x={cx(i)} y={H - 6} textAnchor="middle" fontSize={9} fill="#94A3B8">
               {fmtDay(d.date)}
             </text>
           ) : null,
@@ -213,16 +252,16 @@ function ChannelTable({ channels }: { channels: { platform: Platform; metrics: M
   const max = Math.max(...channels.map((c) => c.metrics.spend), 1);
   const Bar = ({ w, color, value }: { w: number; color: string; value: string }) => (
     <div className="flex items-center justify-end gap-2">
-      <div className="w-12 sm:w-16 md:w-20 h-1.5 bg-[#F5F1E8] overflow-hidden rounded-[3px]">
+      <div className="w-12 sm:w-16 md:w-20 h-1.5 bg-[#F1F5F9] overflow-hidden rounded-[6px]">
         <div className="h-full" style={{ width: `${Math.max(4, w * 100)}%`, background: color }} />
       </div>
-      <span className="text-[12px] text-[#1A1410] w-12 text-right">{value}</span>
+      <span className="text-[12px] text-[#1A202C] w-12 text-right tnum">{value}</span>
     </div>
   );
   return (
-    <div className={`${C.card} ${C.shadow} rounded-[3px] overflow-x-auto`}>
+    <div className={`${C.card} ${C.shadow} rounded-[6px] overflow-x-auto`}>
       <div className="px-3 sm:px-4 min-w-[500px]">
-        <div className="grid grid-cols-5 gap-2 py-2 border-b border-[#EAE3D2] items-center">
+        <div className="grid grid-cols-5 gap-2 py-2 border-b border-[#E2E8F0] items-center">
           <div className={C.label}>Channel</div>
           <div className={`${C.label} text-right`}>Ad Spend</div>
           <div className={`${C.label} text-right`}>ROAS</div>
@@ -230,7 +269,7 @@ function ChannelTable({ channels }: { channels: { platform: Platform; metrics: M
           <div className={`${C.label} text-right`}>Conversions</div>
         </div>
         {channels.map((c) => (
-          <div key={c.platform} className="grid grid-cols-5 gap-2 py-3 border-b border-[#EAE3D2] last:border-b-0 items-center">
+          <div key={c.platform} className="grid grid-cols-5 gap-2 py-3 border-b border-[#E2E8F0] last:border-b-0 items-center">
             <div><PlatformBadge platform={c.platform} /></div>
             <Bar w={c.metrics.spend / max} color={BAR} value={moneyK(c.metrics.spend)} />
             <Bar w={Math.min(1, c.metrics.roas / 5)} color={perfColor(c.metrics.roas)} value={x(c.metrics.roas)} />
@@ -245,14 +284,14 @@ function ChannelTable({ channels }: { channels: { platform: Platform; metrics: M
 
 // ── Top issues ───────────────────────────────────────────────────────────────
 
-const sevColor = { high: "#C94A1F", medium: "#B8860B", low: "#7A6F62" } as const;
+const sevColor = { high: "#B91C1C", medium: "#B45309", low: "#475569" } as const;
 
 function MiniDelta({ label, value, delta }: { label: string; value: string; delta: number | null }) {
   return (
     <span className={C.sub}>
-      {label} <span className="text-[#1A1410] font-medium">{value}</span>
+      {label} <span className="text-[#1A202C] font-medium tnum">{value}</span>
       {delta !== null && (
-        <span className="ml-1" style={{ color: delta >= 0 ? GOOD : BAD }}>
+        <span className="ml-1 tnum" style={{ color: delta >= 0 ? GOOD : BAD }}>
           {delta >= 0 ? "+" : ""}
           {delta.toFixed(0)}%
         </span>
@@ -266,13 +305,13 @@ function IssueRow({ account, issues }: { account: AccountSummary; issues: Issue[
   const p = account.prev;
   const ch = (a: number, b: number | undefined | null) => (b && b > 0 ? ((a - b) / b) * 100 : null);
   return (
-    <div className="relative border-b border-[#EAE3D2] last:border-b-0">
+    <div className="relative border-b border-[#E2E8F0] last:border-b-0">
       <div className="absolute left-0 top-0 bottom-0 w-1 max-h-10" style={{ background: sevColor[issues[0]?.severity ?? "medium"] }} />
       <div className="pl-4 pr-4 py-3">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-2">
           <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
-            <span className="text-[12px] font-semibold text-[#1A1410]">{account.name}</span>
-            <span className="text-[11px] text-[#7A6F62] uppercase tracking-[0.14em] px-1.5 py-0.5 bg-[#F5F1E8] rounded-[3px]">
+            <span className="text-[12px] font-semibold text-[#1A202C]">{account.name}</span>
+            <span className="text-[11px] text-[#475569] uppercase tracking-[0.14em] px-1.5 py-0.5 bg-[#F1F5F9] rounded-[4px]">
               {account.platform === "meta" ? "Meta" : "Google Ads"}
             </span>
             <div className="flex items-center gap-2 sm:gap-3 text-[11px] flex-wrap">
@@ -285,13 +324,13 @@ function IssueRow({ account, issues }: { account: AccountSummary; issues: Issue[
         <ul className="space-y-1 ml-1">
           {issues.map((it) => (
             <li key={it.id} className="flex gap-2">
-              <span className="text-[#A89F90] text-[12px] leading-4 shrink-0">•</span>
-              <div className="text-[12px] text-[#7A6F62] leading-4">
+              <span className="text-[#94A3B8] text-[12px] leading-4 shrink-0">•</span>
+              <div className="text-[12px] text-[#475569] leading-4">
                 <span>
-                  <strong className="text-[#1A1410]">{it.title}</strong>: {it.detail}
+                  <strong className="text-[#1A202C]">{it.title}</strong>: {it.detail}
                 </span>
-                <div className="text-[#7A6F62] mt-0.5">
-                  <strong className="text-[#1A1410]">Action:</strong> {it.action}
+                <div className="text-[#475569] mt-0.5">
+                  <strong className="text-[#1A202C]">Action:</strong> {it.action}
                 </div>
               </div>
             </li>
@@ -305,8 +344,8 @@ function IssueRow({ account, issues }: { account: AccountSummary; issues: Issue[
 function TopIssues({ items, title }: { items: { account: AccountSummary; issues: Issue[] }[]; title: string }) {
   if (items.length === 0) return null;
   return (
-    <div className={`${C.card} ${C.shadow} rounded-[3px]`}>
-      <div className="px-4 sm:px-6 py-4 border-b border-[#EAE3D2]">
+    <div className={`${C.card} ${C.shadow} rounded-[6px]`}>
+      <div className="px-4 sm:px-6 py-4 border-b border-[#E2E8F0]">
         <h3 className={C.label}>{title}</h3>
       </div>
       <div>
@@ -323,17 +362,17 @@ function TopIssues({ items, title }: { items: { account: AccountSummary; issues:
 function PortfolioTable({ accounts }: { accounts: AccountSummary[] }) {
   const maxCtr = Math.max(...accounts.map((a) => a.metrics.ctr), 1);
   const Bar = ({ w, color }: { w: number; color: string }) => (
-    <div className="w-12 sm:w-16 h-1.5 bg-[#F5F1E8] rounded-full overflow-hidden flex-shrink-0">
+    <div className="w-12 sm:w-16 h-1.5 bg-[#F1F5F9] rounded-full overflow-hidden flex-shrink-0">
       <div className="h-full rounded-full" style={{ width: `${Math.max(6, Math.min(100, w * 100))}%`, background: color }} />
     </div>
   );
-  const th = "text-left px-3 sm:px-4 py-2.5 text-[11px] font-semibold text-[#1A1410] uppercase tracking-[0.14em] whitespace-nowrap";
+  const th = "text-left px-3 sm:px-4 py-2.5 text-[11px] font-semibold text-[#1A202C] uppercase tracking-[0.14em] whitespace-nowrap";
   return (
-    <div className={`${C.card} ${C.shadow} rounded-[3px]`}>
+    <div className={`${C.card} ${C.shadow} rounded-[6px]`}>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[700px]">
           <thead>
-            <tr className="border-b border-[#EAE3D2]">
+            <tr className="border-b border-[#E2E8F0]">
               <th className={th}>Account</th>
               <th className={th}>Platform</th>
               <th className={th}>ROAS</th>
@@ -348,26 +387,26 @@ function PortfolioTable({ accounts }: { accounts: AccountSummary[] }) {
               const m = a.metrics;
               const cpaBad = m.roas < 2;
               return (
-                <tr key={a.id} className="border-b border-[#EAE3D2] last:border-b-0 hover:bg-[#F5F1E8] transition-colors">
-                  <td className="px-3 sm:px-4 py-3"><span className="text-[12px] font-medium text-[#1A1410] whitespace-nowrap">{a.name}</span></td>
+                <tr key={a.id} className="border-b border-[#E2E8F0] last:border-b-0 hover:bg-[#F1F5F9] transition-colors">
+                  <td className="px-3 sm:px-4 py-3"><span className="text-[12px] font-medium text-[#1A202C] whitespace-nowrap">{a.name}</span></td>
                   <td className="px-3 sm:px-4 py-3"><PlatformBadge platform={a.platform} /></td>
                   <td className="px-3 sm:px-4 py-3">
                     <div className="flex items-center gap-2">
-                      <span className="text-[12px] font-medium text-[#1A1410] w-8">{x(m.roas)}</span>
+                      <span className="text-[12px] font-medium text-[#1A202C] w-8 tnum">{x(m.roas)}</span>
                       <Bar w={m.roas / 7} color={perfColor(m.roas)} />
                     </div>
                   </td>
                   <td className="px-3 sm:px-4 py-3">
                     <div className="flex items-center gap-2">
-                      <span className="text-[12px] text-[#1A1410] w-8">{pct(m.ctr)}</span>
+                      <span className="text-[12px] text-[#1A202C] w-8 tnum">{pct(m.ctr)}</span>
                       <Bar w={m.ctr / maxCtr} color={ctrColor(m.ctr)} />
                     </div>
                   </td>
-                  <td className="px-3 sm:px-4 py-3 text-right whitespace-nowrap"><span className="text-[12px] text-[#1A1410]">{money(m.spend)}</span></td>
+                  <td className="px-3 sm:px-4 py-3 text-right whitespace-nowrap"><span className="text-[12px] text-[#1A202C] tnum">{money(m.spend)}</span></td>
                   <td className="px-3 sm:px-4 py-3 text-right whitespace-nowrap">
-                    <span className="text-[12px] font-medium" style={{ color: cpaBad ? BAD : "#1A1410" }}>{money(m.cpa)}</span>
+                    <span className="text-[12px] font-medium tnum" style={{ color: cpaBad ? BAD : "#1A202C" }}>{money(m.cpa)}</span>
                   </td>
-                  <td className="px-3 sm:px-4 py-3 text-right whitespace-nowrap"><span className="text-[12px] text-[#1A1410]">{num(m.conversions)}</span></td>
+                  <td className="px-3 sm:px-4 py-3 text-right whitespace-nowrap"><span className="text-[12px] text-[#1A202C] tnum">{num(m.conversions)}</span></td>
                 </tr>
               );
             })}
@@ -378,94 +417,216 @@ function PortfolioTable({ accounts }: { accounts: AccountSummary[] }) {
   );
 }
 
-// ── Top bar ──────────────────────────────────────────────────────────────────
+// ── Phase 2 — analyst report rendering (same component vocabulary) ────────────
 
-const RANGES = [
-  { label: "7D", days: 7 },
-  { label: "30D", days: 30 },
-  { label: "90D", days: 90 },
-];
+const CHART_KEYS = {
+  "spend-roas": { barKey: "spend", lineKey: "roas" },
+  "conv-rate": { barKey: "conversions", lineKey: "convRate" },
+  "clicks-ctr": { barKey: "clicks", lineKey: "ctr" },
+} as const;
+const toneText: Record<Tone, string> = { good: "text-[#047857]", warn: "text-[#B45309]", bad: "text-[#B91C1C]", info: "text-[#475569]" };
+const toneTint: Record<Tone, string> = { good: "bg-[#ECFDF5] text-[#047857]", warn: "bg-[#FFFBEB] text-[#B45309]", bad: "bg-[#FEF2F2] text-[#B91C1C]", info: "bg-[#F1F5F9] text-[#475569]" };
 
-function TopBar({
-  view, setView, accounts, accountId, setAccountId, days, setDays, range, refreshing, onRefresh,
-}: {
-  view: "account" | "portfolio";
-  setView: (v: "account" | "portfolio") => void;
-  accounts: AccountRef[];
-  accountId: string | null;
-  setAccountId: (id: string) => void;
-  days: number;
-  setDays: (d: number) => void;
-  range: { since: string; until: string } | null;
-  refreshing: boolean;
-  onRefresh: () => void;
-}) {
-  const selected = accounts.find((a) => a.id === accountId);
-  return (
-    <div className="flex flex-col gap-3 mb-5 sm:mb-6 lg:flex-row lg:items-center lg:justify-between">
-      <div className="inline-flex border border-[#EAE3D2] bg-[#FFFCF7] w-fit rounded-[3px] overflow-hidden">
-        {(["account", "portfolio"] as const).map((v) => (
-          <button
-            key={v}
-            onClick={() => setView(v)}
-            className={`flex-none px-4 sm:px-5 py-2 text-[12px] sm:text-[13px] font-medium transition-colors whitespace-nowrap ${
-              view === v ? "bg-[#1A1410] text-white" : "text-[#7A6F62] hover:text-[#1A1410] hover:bg-[#F5F1E8]"
-            }`}
-          >
-            {v === "account" ? "Account View" : "Portfolio View"}
-          </button>
-        ))}
-      </div>
-
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3">
-        {view === "account" && (
-          <div className="relative w-fit flex items-center gap-2 pl-3 pr-9 h-9 border border-[#EAE3D2] bg-[#FFFCF7] hover:bg-[#F5F1E8] transition-colors rounded-[3px]">
-            {selected && <PlatformLogo platform={selected.platform} size={16} />}
-            <select
-              value={accountId ?? ""}
-              onChange={(e) => setAccountId(e.target.value)}
-              className="appearance-none bg-transparent min-w-[160px] text-[13px] font-medium text-[#1A1410] cursor-pointer focus:outline-none"
-            >
-              {accounts.length === 0 && <option value="">Select Account</option>}
-              {accounts.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name} · {a.platform === "meta" ? "Meta" : "Google"}
-                </option>
-              ))}
-            </select>
-            <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#A89F90] pointer-events-none" />
-          </div>
-        )}
-        {selected && view === "account" && (
-          <span className="text-[10px] text-[#7A6F62] font-mono self-center hidden sm:inline">ID: {selected.id.replace("act_", "")}</span>
-        )}
-
-        <div className="flex items-center gap-2 px-3 sm:px-4 h-9 border border-[#EAE3D2] bg-[#FFFCF7] rounded-[3px] w-fit">
-          <Calendar className="w-4 h-4 text-[#7A6F62] shrink-0" />
-          <span className="text-[12px] sm:text-[13px] text-[#1A1410] truncate">{range ? fmtRange(range.since, range.until) : "—"}</span>
-        </div>
-
-        <div className="inline-flex border border-[#EAE3D2] bg-[#FFFCF7] rounded-[3px] overflow-hidden h-9">
-          {RANGES.map((r) => (
-            <button
-              key={r.days}
-              onClick={() => setDays(r.days)}
-              className={`px-2.5 text-[12px] font-medium transition-colors ${
-                days === r.days ? "bg-[#1A1410] text-white" : "text-[#7A6F62] hover:text-[#1A1410] hover:bg-[#F5F1E8]"
-              }`}
-            >
-              {r.label}
-            </button>
+function ReportBlock({ block, daily }: { block: Block; daily: DailyPoint[] }) {
+  switch (block.kind) {
+    case "prose":
+      return <p className="text-[13px] text-[#1A202C] leading-relaxed">{block.text}</p>;
+    case "callout":
+      return <div className={`rounded-[6px] px-3.5 py-2.5 text-[13px] font-medium ${toneTint[block.tone]}`}>{block.text}</div>;
+    case "kpis": {
+      const it = block.items;
+      const pairs = [[it[0], it[1]], [it[2], it[3]], [it[4], it[5]]].filter((p) => p[0]);
+      return (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
+          {pairs.map((p, i) => (
+            <KpiCard key={i}
+              left={{ label: p[0].label, value: p[0].value, delta: p[0].deltaPct != null ? { value: 0, prev: 0, deltaPct: p[0].deltaPct, higherIsBetter: p[0].higherIsBetter ?? true } : undefined }}
+              right={p[1] ? { label: p[1].label, value: p[1].value, delta: p[1].deltaPct != null ? { value: 0, prev: 0, deltaPct: p[1].deltaPct, higherIsBetter: p[1].higherIsBetter ?? true } : undefined } : { label: "", value: "" }}
+            />
           ))}
         </div>
+      );
+    }
+    case "chart": {
+      const k = CHART_KEYS[block.chart];
+      return <ComboChart data={daily} barKey={k.barKey} lineKey={k.lineKey} barLabel={block.barLabel} lineLabel={block.lineLabel} />;
+    }
+    case "table":
+      return (
+        <div className={`${C.card} ${C.shadow} rounded-[6px] overflow-x-auto`}>
+          <table className="w-full min-w-[460px]">
+            <thead>
+              <tr className="border-b border-[#E2E8F0]">
+                {block.columns.map((col, i) => (
+                  <th key={i} className={`px-3 sm:px-4 py-2.5 ${C.label} ${col.align === "right" ? "text-right" : "text-left"}`}>{col.label}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {block.rows.map((row, ri) => (
+                <tr key={ri} className="border-b border-[#E2E8F0] last:border-b-0">
+                  {row.map((cell, ci) => (
+                    <td key={ci} className={`px-3 sm:px-4 py-3 text-[12px] tnum ${cell.align === "right" ? "text-right" : "text-left"} ${cell.tone ? toneText[cell.tone] : "text-[#1A202C]"}`}>{cell.text}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+    case "findings":
+      return (
+        <ul className="space-y-3">
+          {block.items.map((f, i) => (
+            <li key={i} className="relative pl-4">
+              <span className="absolute left-0 top-0.5 bottom-0.5 w-1 rounded-full" style={{ background: sevColor[f.severity] }} />
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[13px] font-semibold text-[#1A202C]">{f.title}</span>
+                <span className={`text-[11px] font-semibold rounded-full px-2 py-0.5 ${toneTint[f.severity === "high" ? "bad" : f.severity === "medium" ? "warn" : "info"]}`}>{f.severity}</span>
+              </div>
+              <p className="text-[12px] text-[#475569] leading-relaxed mt-1">{f.detail}</p>
+              {f.recommendation && <p className="text-[12px] text-[#1A202C] leading-relaxed mt-1"><strong>Advise:</strong> {f.recommendation}</p>}
+            </li>
+          ))}
+        </ul>
+      );
+    case "recommendations":
+      return (
+        <ul className="space-y-2.5">
+          {block.items.map((r, i) => (
+            <li key={i} className="flex items-start gap-2.5">
+              <span className="text-[11px] font-semibold text-[#475569] bg-[#F1F5F9] border border-[#E2E8F0] rounded-[4px] px-1.5 py-0.5 tnum">{r.priority}</span>
+              <span className="text-[13px] text-[#1A202C] leading-relaxed">{r.text}</span>
+            </li>
+          ))}
+        </ul>
+      );
+  }
+}
 
-        <button
-          onClick={onRefresh}
-          className="p-2.5 h-9 border border-[#EAE3D2] bg-[#FFFCF7] hover:bg-[#F5F1E8] rounded-[3px] flex items-center justify-center"
-          aria-label="Refresh"
-        >
-          <RefreshCw className={`w-4 h-4 text-[#7A6F62] ${refreshing ? "animate-spin" : ""}`} />
-        </button>
+function ReportSectionCard({ section, daily }: { section: ReportSection; daily: DailyPoint[] }) {
+  const charts = section.blocks.every((b) => b.kind === "chart");
+  const bare = section.blocks.every((b) => b.kind === "kpis"); // KPI cards bring their own boxes
+  const body = (
+    charts ? (
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
+        {section.blocks.map((b, i) => <ReportBlock key={i} block={b} daily={daily} />)}
+      </div>
+    ) : (
+      <div className="space-y-3.5">{section.blocks.map((b, i) => <ReportBlock key={i} block={b} daily={daily} />)}</div>
+    )
+  );
+  return (
+    <div className="print-block">
+      <div className="flex items-center justify-between mb-2.5">
+        <h3 className={C.label}>{section.eyebrow}</h3>
+        {section.note && <span className={`text-[11px] ${C.faint} uppercase tracking-[0.14em] tnum`}>{section.note}</span>}
+      </div>
+      {charts || bare ? body : <div className={`${C.card} ${C.shadow} rounded-[6px] p-4 sm:p-5`}>{body}</div>}
+    </div>
+  );
+}
+
+function ReportDocView({ doc }: { doc: ReportDoc }) {
+  return (
+    <div className="space-y-5">
+      <div className={`${C.card} ${C.shadow} rounded-[6px] p-4 sm:p-5 print-block`}>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <span className={C.label}>{doc.title}</span>
+            <h2 className="text-[19px] font-semibold tracking-[-0.01em] text-[#1A202C] mt-1">{doc.account.name}</h2>
+            <div className="flex items-center gap-2 mt-2 flex-wrap text-[11px]">
+              <PlatformBadge platform={doc.account.platform} />
+              <span className={`${C.sub}`}>{doc.subtitle.split(" · ").slice(-1)[0]}</span>
+              <span className="text-[#475569] bg-[#F1F5F9] border border-[#E2E8F0] rounded-[4px] px-1.5 py-0.5">{doc.ai ? "AI analysis" : "rule-based"}</span>
+              {doc.preview && <span className="text-[#475569] bg-[#F1F5F9] border border-[#E2E8F0] rounded-[4px] px-1.5 py-0.5">preview</span>}
+            </div>
+          </div>
+          <span className={`text-[12px] font-semibold rounded-full px-2.5 py-1 ${toneTint[doc.health.tone]}`}>{doc.health.label}</span>
+        </div>
+      </div>
+      {doc.sections.map((s, i) => <ReportSectionCard key={i} section={s} daily={doc.daily} />)}
+    </div>
+  );
+}
+
+function ReportGallery({ recipes, selected, onPick }: { recipes: RecipeMeta[]; selected: string; onPick: (id: string) => void }) {
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+      {recipes.map((r) => {
+        const active = r.id === selected;
+        return (
+          <button key={r.id} disabled={!r.available} onClick={() => r.available && onPick(r.id)}
+            className={`text-left p-5 rounded-[14px] transition-colors ${
+              active ? "bg-[#EEF0F3] ring-1 ring-[#DD5164]" : "bg-[#F6F7F9] hover:bg-[#EEF0F3]"
+            } ${!r.available ? "opacity-60 cursor-not-allowed hover:bg-[#F6F7F9]" : ""}`}>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[15px] font-bold text-[#1A202C] tracking-[-0.01em]">{r.name}</span>
+              {!r.available && <span className="text-[10px] text-[#475569] bg-white border border-[#E2E8F0] rounded-full px-1.5 py-0.5 uppercase tracking-[0.1em]">soon</span>}
+            </div>
+            <p className="text-[13px] text-[#475569] leading-snug mt-1.5">{r.blurb}</p>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Top bar ──────────────────────────────────────────────────────────────────
+
+const RANGES = [{ label: "7D", days: 7 }, { label: "30D", days: 30 }, { label: "90D", days: 90 }];
+type View = "account" | "portfolio" | "reports";
+
+function TopBar({
+  view, setView, accounts, accountId, setAccountId, days, setDays, range, refreshing, onRefresh, onGenerate, generating,
+}: {
+  view: View; setView: (v: View) => void; accounts: AccountRef[]; accountId: string | null; setAccountId: (id: string) => void;
+  days: number; setDays: (d: number) => void; range: { since: string; until: string } | null;
+  refreshing: boolean; onRefresh: () => void; onGenerate: () => void; generating: boolean;
+}) {
+  const selected = accounts.find((a) => a.id === accountId);
+  const showPicker = view === "account" || view === "reports";
+  return (
+    <div className="flex flex-col gap-3 mb-5 sm:mb-6 lg:flex-row lg:items-center lg:justify-between no-print">
+      <Segmented value={view} onChange={setView} options={[
+        { value: "account", label: "Account View" },
+        { value: "portfolio", label: "Portfolio View" },
+        { value: "reports", label: "Reports" },
+      ]} />
+
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3">
+        {showPicker && (
+          <div className="relative w-fit flex items-center gap-2 pl-3 pr-9 h-9 border border-[#E2E8F0] bg-white hover:bg-[#F1F5F9] transition-colors rounded-[6px]">
+            {selected && <PlatformLogo platform={selected.platform} size={16} />}
+            <select value={accountId ?? ""} onChange={(e) => setAccountId(e.target.value)}
+              className="appearance-none bg-transparent min-w-[160px] text-[13px] font-medium text-[#1A202C] cursor-pointer focus:outline-none">
+              {accounts.length === 0 && <option value="">Select Account</option>}
+              {accounts.map((a) => (
+                <option key={a.id} value={a.id}>{a.name} · {a.platform === "meta" ? "Meta" : "Google"}</option>
+              ))}
+            </select>
+            <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#94A3B8] pointer-events-none" />
+          </div>
+        )}
+
+        <div className="flex items-center gap-2 px-3 sm:px-4 h-9 border border-[#E2E8F0] bg-white rounded-[6px] w-fit">
+          <Calendar className="w-4 h-4 text-[#475569] shrink-0" />
+          <span className="text-[12px] sm:text-[13px] text-[#1A202C] truncate tnum">{range ? fmtRange(range.since, range.until) : "—"}</span>
+        </div>
+
+        <Segmented value={String(days)} onChange={(v) => setDays(Number(v))} size="sm"
+          options={RANGES.map((r) => ({ value: String(r.days), label: r.label }))} />
+
+        {view === "reports" ? (
+          <button onClick={onGenerate} disabled={generating || (!accountId && accounts.length > 0)}
+            className="inline-flex items-center justify-center gap-1.5 h-9 px-3.5 rounded-[6px] text-[13px] font-medium bg-[#DD5164] text-white hover:bg-[#C53A4E] transition-colors disabled:opacity-50 disabled:pointer-events-none">
+            <Sparkles className="w-4 h-4" />{generating ? "Generating…" : "Generate"}
+          </button>
+        ) : (
+          <button onClick={onRefresh} className="p-2.5 h-9 border border-[#E2E8F0] bg-white hover:bg-[#F1F5F9] rounded-[6px] flex items-center justify-center" aria-label="Refresh">
+            <RefreshCw className={`w-4 h-4 text-[#475569] ${refreshing ? "animate-spin" : ""}`} />
+          </button>
+        )}
       </div>
     </div>
   );
@@ -474,12 +635,16 @@ function TopBar({
 // ── App ──────────────────────────────────────────────────────────────────────
 
 export function App() {
-  const [view, setView] = useState<"account" | "portfolio">("portfolio");
+  const [view, setView] = useState<View>("portfolio");
   const [accounts, setAccounts] = useState<AccountRef[]>([]);
   const [accountId, setAccountId] = useState<string | null>(null);
   const [days, setDays] = useState(30);
   const [portfolio, setPortfolio] = useState<PortfolioReport | null>(null);
   const [account, setAccount] = useState<AccountReport | null>(null);
+  const [recipes, setRecipes] = useState<RecipeMeta[]>([]);
+  const [recipe, setRecipe] = useState("account-audit");
+  const [report, setReport] = useState<ReportDoc | null>(null);
+  const [generating, setGenerating] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
@@ -493,65 +658,58 @@ export function App() {
   }, [days]);
   const qs = `since=${range.since}&until=${range.until}`;
 
-  // Load account list once.
   useEffect(() => {
-    fetch("/api/accounts")
-      .then((r) => r.json())
-      .then((data) => {
-        const list: AccountRef[] = data.accounts ?? [];
-        setAccounts(list);
-        setAccountId((cur) => cur ?? (list[0]?.id ?? null));
-      })
-      .catch(() => {});
+    fetch("/api/accounts").then((r) => r.json()).then((data) => {
+      const list: AccountRef[] = data.accounts ?? [];
+      setAccounts(list);
+      setAccountId((cur) => cur ?? (list[0]?.id ?? null));
+    }).catch(() => {});
+    fetch("/api/reports").then((r) => r.json()).then((d) => setRecipes(d.recipes ?? [])).catch(() => {});
   }, []);
 
-  // Portfolio fetch.
   useEffect(() => {
     if (view !== "portfolio") return;
-    setRefreshing(true);
-    setError(null);
-    fetch(`/api/portfolio?${qs}`)
-      .then((r) => r.json())
+    setRefreshing(true); setError(null);
+    fetch(`/api/portfolio?${qs}`).then((r) => r.json())
       .then((d) => (d.error ? setError(d.error) : setPortfolio(d)))
-      .catch((e) => setError(String(e)))
-      .finally(() => setRefreshing(false));
+      .catch((e) => setError(String(e))).finally(() => setRefreshing(false));
   }, [view, qs, nonce]);
 
-  // Account fetch.
   useEffect(() => {
     if (view !== "account" || !accountId) return;
     const acc = accounts.find((a) => a.id === accountId);
     const plat = acc ? `&platform=${acc.platform}` : "";
-    setRefreshing(true);
-    setError(null);
-    fetch(`/api/account?account_id=${encodeURIComponent(accountId)}${plat}&${qs}`)
-      .then((r) => r.json())
+    setRefreshing(true); setError(null);
+    fetch(`/api/account?account_id=${encodeURIComponent(accountId)}${plat}&${qs}`).then((r) => r.json())
       .then((d) => (d.error ? setError(d.error) : setAccount(d)))
-      .catch((e) => setError(String(e)))
-      .finally(() => setRefreshing(false));
+      .catch((e) => setError(String(e))).finally(() => setRefreshing(false));
   }, [view, accountId, qs, nonce, accounts]);
 
-  const preview = (view === "portfolio" ? portfolio?.preview : account?.preview) ?? false;
+  useEffect(() => { setReport(null); }, [accountId, recipe, days]);
+
+  function generate() {
+    const acc = accounts.find((a) => a.id === accountId);
+    const plat = acc ? `&platform=${acc.platform}` : "";
+    setGenerating(true); setError(null);
+    fetch(`/api/report?recipe=${recipe}&account_id=${encodeURIComponent(accountId ?? "")}${plat}&${qs}`).then((r) => r.json())
+      .then((d) => (d.error ? setError(d.error) : setReport(d)))
+      .catch((e) => setError(String(e))).finally(() => setGenerating(false));
+  }
+
+  const preview = (view === "portfolio" ? portfolio?.preview : view === "account" ? account?.preview : report?.preview) ?? false;
   const currency = account?.account.currency ?? "USD";
 
   return (
-    <div className="min-h-screen bg-[#F7F4ED]">
+    <div className="min-h-screen bg-white">
       <div className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 py-5 sm:py-6 w-full">
         <TopBar
-          view={view}
-          setView={setView}
-          accounts={accounts}
-          accountId={accountId}
-          setAccountId={setAccountId}
-          days={days}
-          setDays={setDays}
-          range={range}
-          refreshing={refreshing}
-          onRefresh={() => setNonce((n) => n + 1)}
+          view={view} setView={setView} accounts={accounts} accountId={accountId} setAccountId={setAccountId}
+          days={days} setDays={setDays} range={range} refreshing={refreshing} onRefresh={() => setNonce((n) => n + 1)}
+          onGenerate={generate} generating={generating}
         />
 
         {error && (
-          <div className="px-4 py-3 rounded-[3px] border border-[#E2C9B8] bg-[#FBF1EA] text-[13px] text-[#963024] mb-4">{error}</div>
+          <div className="px-4 py-3 rounded-[6px] border border-[#FECACA] bg-[#FEF2F2] text-[13px] text-[#B91C1C] mb-4 no-print">{error}</div>
         )}
 
         {/* ── Portfolio View ── */}
@@ -572,18 +730,9 @@ export function App() {
         {view === "account" && account && (
           <div className="space-y-5 sm:space-y-6">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
-              <KpiCard
-                left={{ label: "Cost", value: money(account.kpis.cost.value, currency), delta: account.kpis.cost }}
-                right={{ label: "ROAS", value: x(account.kpis.roas.value), delta: account.kpis.roas }}
-              />
-              <KpiCard
-                left={{ label: "Conversions", value: num(account.kpis.conversions.value), delta: account.kpis.conversions }}
-                right={{ label: "Conv. Rate", value: pct(account.kpis.convRate.value), delta: account.kpis.convRate }}
-              />
-              <KpiCard
-                left={{ label: "Clicks", value: num(account.kpis.clicks.value), delta: account.kpis.clicks }}
-                right={{ label: "CTR", value: pct(account.kpis.ctr.value), delta: account.kpis.ctr }}
-              />
+              <KpiCard left={{ label: "Cost", value: money(account.kpis.cost.value, currency), delta: account.kpis.cost }} right={{ label: "ROAS", value: x(account.kpis.roas.value), delta: account.kpis.roas }} />
+              <KpiCard left={{ label: "Conversions", value: num(account.kpis.conversions.value), delta: account.kpis.conversions }} right={{ label: "Conv. Rate", value: pct(account.kpis.convRate.value), delta: account.kpis.convRate }} />
+              <KpiCard left={{ label: "Clicks", value: num(account.kpis.clicks.value), delta: account.kpis.clicks }} right={{ label: "CTR", value: pct(account.kpis.ctr.value), delta: account.kpis.ctr }} />
             </div>
             {preview && <PreviewBanner />}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
@@ -599,12 +748,36 @@ export function App() {
           </div>
         )}
 
-        {!portfolio && !account && !error && <div className="py-24 text-center text-[13px] text-[#A89F90]">Loading…</div>}
+        {/* ── Reports View (Phase 2) ── */}
+        {view === "reports" && (
+          <div className="space-y-5 sm:space-y-6">
+            <div className="no-print">
+              <ReportGallery recipes={recipes} selected={recipe} onPick={setRecipe} />
+            </div>
+            {report ? (
+              <>
+                <div className="no-print flex items-center justify-between gap-3">
+                  <span className="text-[12px] text-[#475569]">{report.ai ? "Analysis by AI" : "Rule-based analysis"}</span>
+                  <button onClick={() => window.print()} className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-[6px] text-[13px] font-medium bg-white border border-[#E2E8F0] text-[#1A202C] hover:bg-[#F1F5F9] transition-colors">
+                    <Download className="w-4 h-4" />Download PDF
+                  </button>
+                </div>
+                <ReportDocView doc={report} />
+              </>
+            ) : (
+              <div className="no-print py-20 text-center text-[13px] text-[#94A3B8]">
+                Pick a report and an account, then press Generate.
+              </div>
+            )}
+          </div>
+        )}
 
-        <footer className="mt-8 sm:mt-12 pt-4 sm:pt-6 border-t border-[#EAE3D2]">
-          <div className="flex items-center justify-end gap-6 text-[13px] text-[#7A6F62]">
+        {!portfolio && !account && view !== "reports" && !error && <div className="py-24 text-center text-[13px] text-[#94A3B8]">Loading…</div>}
+
+        <footer className="mt-8 sm:mt-12 pt-4 sm:pt-6 border-t border-[#E2E8F0] no-print">
+          <div className="flex items-center justify-end gap-6 text-[13px] text-[#475569]">
             <span>Open Ads Report</span>
-            <span className="font-mono text-[11px]">API: /api/portfolio · /api/account</span>
+            <span className="font-mono text-[11px]">API: /api/portfolio · /api/account · /api/report</span>
           </div>
         </footer>
       </div>
