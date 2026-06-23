@@ -1,1 +1,12 @@
 @import "tailwindcss";
+
+/* Tabular figures for numbers. */
+.tnum { font-feature-settings: "tnum" 1, "cv01" 1; }
+
+/* Print / PDF export — the report is the page; chrome hides. */
+@media print {
+  @page { margin: 14mm; }
+  .no-print { display: none !important; }
+  .print-block { break-inside: avoid; }
+  body { background: #ffffff; }
+}

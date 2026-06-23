@@ -1,3 +1,5 @@
+<img src="readme-banner.png" alt="Open Ads Report preview" />
+
 # Open Ads Report
 
 A live, cross-platform ads dashboard for **Meta Ads** and **Google Ads**. The app
@@ -13,6 +15,11 @@ and to Claude Code.
 - **Account View** — one account in depth: KPI cards with period-over-period
   deltas, three combo charts (Cost/ROAS, Conversions/Conv-rate, Clicks/CTR), a
   channel breakdown, and that account's top issues.
+- **Reports** — agent-authored analyst reports. Pick a recipe (Account Audit
+  today; Search Terms, Creative Fatigue, Landing Page next), generate a
+  diagnostic audit — health verdict, KPIs, trends, findings, and prioritised
+  recommendations — and export it to PDF. AI-written when `OPENROUTER_API_KEY`
+  is set, deterministic heuristics otherwise.
 
 When no ad platform is connected the dashboard renders **sample/preview data** so
 it looks alive inside the Clawnify iframe.

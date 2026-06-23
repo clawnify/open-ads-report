@@ -1,0 +1,13 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="512" height="512" rx="112" fill="#DD5164"/>
+  <!-- metric bars (the data) -->
+  <g fill="#FFFFFF" opacity="0.5">
+    <rect x="118" y="296" width="48" height="98" rx="12"/>
+    <rect x="190" y="248" width="48" height="146" rx="12"/>
+    <rect x="262" y="272" width="48" height="122" rx="12"/>
+    <rect x="334" y="206" width="48" height="188" rx="12"/>
+  </g>
+  <!-- trend line (the signal) -->
+  <polyline points="142,278 214,224 286,250 358,182" fill="none" stroke="#FFFFFF" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="358" cy="182" r="17" fill="#FFFFFF"/>
+</svg>
