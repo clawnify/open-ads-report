@@ -1,22 +1,14 @@
-// Meta Ads provider. Maps the Graph API Insights endpoints into the normalized
-// shapes in types.ts. Credentials come from connect("metaads") — no token
-// plumbing here; the SDK injects the bearer token on every call.
+// Meta Ads provider. All data comes through the connections SDK's semantic
+// methods — connect("metaads").adAccounts() / insights() / object() — which route
+// through whatever maintainer holds the credential (Composio execute today). The
+// app carries NO Graph API URLs, version, or token plumbing: the broker is hidden
+// and a future maintainer swap changes the descriptor, not this file.
 
 import type { AccountRef, AccountReport, AccountSummary, AdProvider, DailyPoint, DateRange, Metrics } from "./types";
-import { connect, isConnected, type ConnectionsEnv, type MetaAdsClient } from "@clawnify/connections";
+import { connect, isConnected, type ConnectionsEnv, type MetaAdsClient, type MetaInsightRow } from "@clawnify/connections";
 import { buildKpis, deriveIssues, emptyMetrics, metrics } from "../metrics";
 
-const INSIGHT_FIELDS = "spend,impressions,clicks,actions,action_values";
-
 type MetaAction = { action_type: string; value: string };
-type InsightRow = {
-  date_start?: string;
-  spend?: string;
-  impressions?: string;
-  clicks?: string;
-  actions?: MetaAction[];
-  action_values?: MetaAction[];
-};
 
 function pickAction(arr: MetaAction[] | undefined, type: string): number {
   const omni = arr?.find((a) => a.action_type === `omni_${type}`);
@@ -24,7 +16,7 @@ function pickAction(arr: MetaAction[] | undefined, type: string): number {
   return +((omni ?? direct)?.value ?? 0);
 }
 
-function rowMetrics(row: InsightRow): Metrics {
+function rowMetrics(row: MetaInsightRow): Metrics {
   return metrics({
     spend: +(row.spend ?? 0),
     revenue: pickAction(row.action_values, "purchase"),
@@ -34,17 +26,7 @@ function rowMetrics(row: InsightRow): Metrics {
   });
 }
 
-const timeRange = (since: string, until: string) => JSON.stringify({ since, until });
-
-async function accountInsights(client: MetaAdsClient, accountId: string, since: string, until: string): Promise<Metrics> {
-  const data = await client.get(`/${accountId}/insights`, {
-    fields: INSIGHT_FIELDS,
-    time_range: timeRange(since, until),
-    level: "account",
-  });
-  const row = (data.data ?? [])[0] as InsightRow | undefined;
-  return row ? rowMetrics(row) : emptyMetrics();
-}
+const first = (rows: MetaInsightRow[]): Metrics => (rows[0] ? rowMetrics(rows[0]) : emptyMetrics());
 
 export class MetaProvider implements AdProvider {
   readonly id = "meta" as const;
@@ -60,13 +42,10 @@ export class MetaProvider implements AdProvider {
   }
 
   async listAccounts(): Promise<AccountRef[]> {
-    const data = await this.client.get("/me/adaccounts", {
-      fields: "name,id,currency,account_status",
-      limit: "100",
-    });
-    return ((data.data ?? []) as any[])
+    const accounts = await this.client.adAccounts("name,currency,account_status");
+    return accounts
       .filter((a) => a.account_status === 1)
-      .map((a) => ({ id: a.id, name: a.name, platform: "meta" as const, currency: a.currency ?? "USD" }));
+      .map((a) => ({ id: a.id, name: a.name ?? a.id, platform: "meta" as const, currency: a.currency ?? "USD" }));
   }
 
   async accountSummaries(range: DateRange): Promise<AccountSummary[]> {
@@ -74,57 +53,46 @@ export class MetaProvider implements AdProvider {
     return Promise.all(
       accounts.map(async (acc) => {
         const [cur, prev] = await Promise.all([
-          accountInsights(this.client, acc.id, range.since, range.until),
-          accountInsights(this.client, acc.id, range.prevSince, range.prevUntil),
+          this.client.insights(acc.id, { level: "account", since: range.since, until: range.until }),
+          this.client.insights(acc.id, { level: "account", since: range.prevSince, until: range.prevUntil }),
         ]);
-        return { ...acc, metrics: cur, prev };
+        return { ...acc, metrics: first(cur), prev: prev[0] ? rowMetrics(prev[0]) : null };
       }),
     );
   }
 
   async accountReport(accountId: string, range: DateRange): Promise<AccountReport> {
     const id = accountId.startsWith("act_") ? accountId : `act_${accountId}`;
-    const [meta, cur, prev, dailyRaw] = await Promise.all([
-      this.client.get(`/${id}`, { fields: "name,currency" }),
-      accountInsights(this.client, id, range.since, range.until),
-      accountInsights(this.client, id, range.prevSince, range.prevUntil),
-      this.client.get(`/${id}/insights`, {
-        fields: INSIGHT_FIELDS,
-        time_range: timeRange(range.since, range.until),
-        time_increment: "1",
-        level: "account",
-      }),
+    const [obj, cur, prev, daily] = await Promise.all([
+      this.client.object(id, ["name", "currency"]),
+      this.client.insights(id, { level: "account", since: range.since, until: range.until }),
+      this.client.insights(id, { level: "account", since: range.prevSince, until: range.prevUntil }),
+      // Per-day series for the charts (Graph time_increment=1).
+      this.client.insights(id, { level: "account", since: range.since, until: range.until, timeIncrement: 1 }),
     ]);
 
-    const account: AccountRef = {
-      id,
-      name: meta.name ?? id,
-      platform: "meta",
-      currency: meta.currency ?? "USD",
-    };
+    const curM = first(cur);
+    const prevM = prev[0] ? rowMetrics(prev[0]) : null;
+    const account: AccountRef = { id, name: obj.name ?? id, platform: "meta", currency: obj.currency ?? "USD" };
 
-    const daily: DailyPoint[] = ((dailyRaw.data ?? []) as InsightRow[]).map((row) => {
-      const m = rowMetrics(row);
-      return {
-        date: row.date_start!,
-        spend: m.spend,
-        revenue: m.revenue,
-        conversions: m.conversions,
-        clicks: m.clicks,
-        impressions: m.impressions,
-        roas: m.roas,
-        convRate: m.convRate,
-        ctr: m.ctr,
-      };
-    });
+    const series: DailyPoint[] = daily
+      .filter((row) => row.date_start)
+      .map((row) => {
+        const m = rowMetrics(row);
+        return {
+          date: row.date_start!,
+          spend: m.spend, revenue: m.revenue, conversions: m.conversions, clicks: m.clicks,
+          impressions: m.impressions, roas: m.roas, convRate: m.convRate, ctr: m.ctr,
+        };
+      });
 
     return {
       account,
       range: { since: range.since, until: range.until, days: range.days },
-      kpis: buildKpis(cur, prev),
-      daily,
-      channels: [{ platform: "meta", metrics: cur }],
-      issues: deriveIssues(cur, prev, daily),
+      kpis: buildKpis(curM, prevM),
+      daily: series,
+      channels: [{ platform: "meta", metrics: curM }],
+      issues: deriveIssues(curM, prevM, series),
       generatedAt: new Date().toISOString(),
       preview: false,
     };

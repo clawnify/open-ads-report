@@ -9,7 +9,7 @@
     "deploy": "clawnify deploy"
   },
   "dependencies": {
-    "@clawnify/connections": "^0.1.0",
+    "@clawnify/connections": "^0.2.2",
     "hono": "^4.0.0",
     "lucide-react": "^0.400.0",
     "react": "^19.0.0",
